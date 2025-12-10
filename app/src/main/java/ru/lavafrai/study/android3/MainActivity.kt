@@ -1,56 +1,69 @@
-package ru.lavafrai.study.android2
+package ru.lavafrai.study.android3
 
+import android.annotation.SuppressLint
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import androidx.lifecycle.viewmodel.compose.viewModel
-import ru.lavafrai.study.android2.models.CounterItem
-import ru.lavafrai.study.android2.ui.theme.Android2Theme
-import ru.lavafrai.study.android2.viewmodels.MainViewModel
+import org.koin.androidx.compose.koinViewModel
+import ru.lavafrai.study.android3.models.TimerItem
+import ru.lavafrai.study.android3.service.TimerService
+import ru.lavafrai.study.android3.ui.theme.Android2Theme
+import ru.lavafrai.study.android3.viewmodels.MainViewModel
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // При каждом запуске приложения пробуем запустить/возобновить сервис таймеров
+        val serviceIntent = Intent(this, TimerService::class.java)
+        startForegroundService(serviceIntent)
+
         setContent {
             Android2Theme {
-                App()
+                AppView()
             }
         }
     }
 }
 
 @Composable
-fun App() {
-    val viewModel = viewModel<MainViewModel>()
+fun AppView(
+    viewModel: MainViewModel = koinViewModel(),
+) {
     val items by viewModel.items.collectAsState()
     val editing by viewModel.editingState.collectAsState()
 
@@ -58,29 +71,29 @@ fun App() {
         modifier = Modifier.fillMaxSize(),
         floatingActionButton = {
             FloatingActionButton(onClick = {
-                val newItem = CounterItem(
-                    name = "Item ${items.size + 1}",
-                    counter = 0,
-                )
-                viewModel.addItem(newItem)
+                viewModel.addItem()
             }) {
                 Icon(Icons.Default.Add, "add item")
             }
         }
     ) { innerPadding ->
         LazyColumn(
-            modifier = Modifier.padding(innerPadding).fillMaxSize(),
+            modifier = Modifier
+                .padding(innerPadding)
+                .fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(8.dp)
         ) {
             items(items, key = { it.id }) { item ->
-                CounterItemView(
+                TimerItemView(
                     item,
-                    onIncrement = { viewModel.incrementCounter(item.id) },
-                    onDecrement = { viewModel.decrementCounter(item.id) },
                     onRemoveRequest = { viewModel.removeItem(item.id) },
+                    onToggleTicking = { viewModel.toggleTimerTicking(item.id) },
+                    onReset = { viewModel.resetTimer(item.id) },
                     onClick = { viewModel.startEditing(item.id) },
-                    modifier = Modifier.fillMaxWidth().animateItem()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .animateItem()
                 )
             }
         }
@@ -103,12 +116,20 @@ fun App() {
 
 @Composable
 fun EditItemDialog(
-    item: CounterItem,
+    item: TimerItem,
     onDismissRequest: () -> Unit,
-    onUpdate: (CounterItem) -> Unit,
+    onUpdate: (TimerItem) -> Unit,
 ) {
     var newName by rememberSaveable(item) { mutableStateOf(item.name) }
-    var newCounter by rememberSaveable(item) { mutableIntStateOf(item.counter) }
+    val timePickerState = rememberTimePickerState(
+        initialHour = item.timerDuration().toComponents { hours, minutes, seconds, nanoseconds ->
+            hours
+        }.toInt(),
+        initialMinute = item.timerDuration().toComponents { hours, minutes, seconds, nanoseconds ->
+            minutes
+        },
+        is24Hour = true,
+    )
 
     Dialog(onDismissRequest = onDismissRequest) {
         Card {
@@ -123,7 +144,7 @@ fun EditItemDialog(
                     text = "Edit Item",
                     style = LocalTextStyle.current.copy(fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 )
-                Text(text = "Name:")
+                // Text(text = "Name:")
                 OutlinedTextField(
                     value = newName,
                     onValueChange = { newName = it },
@@ -131,20 +152,20 @@ fun EditItemDialog(
                     label = { Text("Name") },
                 )
 
-                Text(text = "Counter:")
-                OutlinedTextField(
-                    value = newCounter.toString(),
-                    onValueChange = { newCounter = it.toIntOrNull() ?: newCounter },
-                    keyboardOptions = KeyboardOptions.Default.copy(keyboardType = KeyboardType.Number),
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(text = "Timer:")
+                TimeInput(
+                    state = timePickerState,
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Counter") },
                 )
 
                 Button(
                     onClick = {
                         val updatedItem = item.copy(
                             name = newName,
-                            counter = newCounter,
+                            timer = (timePickerState.hour.hours + timePickerState.minute.minutes).inWholeSeconds,
+                            defaultValue = (timePickerState.hour.hours + timePickerState.minute.minutes).inWholeSeconds,
+                            ticking = false,
                         )
                         onUpdate(updatedItem)
                     },
@@ -157,17 +178,20 @@ fun EditItemDialog(
     }
 }
 
+@SuppressLint("DefaultLocale")
 @Composable
-fun CounterItemView(
-    item: CounterItem,
+fun TimerItemView(
+    item: TimerItem,
     onClick: () -> Unit,
     onRemoveRequest: () -> Unit,
-    onIncrement: () -> Unit,
-    onDecrement: () -> Unit,
+    onToggleTicking: () -> Unit,
+    onReset: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Card(
-        modifier = modifier.fillMaxWidth().clickable(onClick = onClick)
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
     ) {
         Row(
             modifier = Modifier
@@ -186,22 +210,46 @@ fun CounterItemView(
                 Icon(Icons.Default.Delete, "remove item")
             }
 
-            Text(
-                text = item.name,
-                style = LocalTextStyle.current.copy(fontSize = 24.sp, fontWeight = FontWeight.Bold),
-                modifier = Modifier.weight(1f).padding(horizontal = 16.dp)
-            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 16.dp)
+            ) {
+                Text(
+                    text = item.name,
+                    style = LocalTextStyle.current.copy(fontSize = 24.sp, fontWeight = FontWeight.Bold),
+                    modifier = Modifier
+                )
 
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                IconButton(onClick = onIncrement) {
-                    Icon(Icons.Default.Add, "increment")
+                val timerText = remember(item) {
+                    item.timerDuration().toComponents { hours, minutes, seconds, nanoseconds ->
+                        String.format("%02d:%02d:%02d", hours, minutes, seconds)
+                    }
                 }
                 Text(
-                    text = "${item.counter}",
-                    style = LocalTextStyle.current.copy(fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    text = timerText,
+                    style = LocalTextStyle.current.copy(fontSize = 18.sp, fontWeight = FontWeight.Bold),
+                    modifier = Modifier.alpha(0.8f)
                 )
-                IconButton(onClick = onDecrement) {
-                    Icon(painterResource(R.drawable.ic_remove), "decrement")
+            }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onToggleTicking) {
+                    if (item.ticking) Icon(
+                        painterResource(R.drawable.ic_pause),
+                        "pause timer"
+                    ) else Icon(
+                        Icons.Default.PlayArrow,
+                        "start timer"
+                    )
+                }
+                IconButton(onClick = onReset) {
+                    Icon(
+                        Icons.Default.Refresh,
+                        "reset timer"
+                    )
                 }
             }
         }
