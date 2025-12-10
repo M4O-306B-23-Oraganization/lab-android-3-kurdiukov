@@ -70,4 +70,22 @@ class MainViewModel(
             timerRepository.updateTimer(updatedItem)
         }
     }
+
+    fun startAllTimers() {
+        viewModelScope.launch {
+            val updatedItems = items.value.map { it.copy(ticking = true) }
+            for (item in updatedItems) {
+                timerRepository.updateTimer(item)
+            }
+        }
+    }
+
+    fun stopAllTimers() {
+        viewModelScope.launch {
+            val updatedItems = items.value.map { it.copy(ticking = false) }
+            for (item in updatedItems) {
+                timerRepository.updateTimer(item)
+            }
+        }
+    }
 }

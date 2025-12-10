@@ -7,7 +7,7 @@ import kotlin.uuid.Uuid
 data class TimerItem(
     val name: String,
     val id: Uuid = Uuid.random(),
-    val timer: Long = 0L,
+    val timer: Long = 60L,
     val ticking: Boolean = false,
     val defaultValue: Long = timer,
 ) {
